@@ -1,0 +1,36 @@
+{
+  "name": "nodryl",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Watch your software run",
+  "bin": { "nodryl": "bin/nodryl.js" },
+  "files": ["bin/nodryl.js", "bin/preload.cjs", "readme.md"],
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "test": "npm run build:fixture && go test ./...",
+    "build": "go build -o dist/nodryl ./cmd/nodryl",
+    "build:fixture": "tsc -p test/fixture/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^25.0.0",
+    "express": "^5.0.0",
+    "typescript": "^6.0.0"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.222.0",
+    "@opentelemetry/instrumentation-express": "^0.70.0",
+    "@opentelemetry/instrumentation-http": "^0.222.0",
+    "@opentelemetry/instrumentation-ioredis": "^0.70.0",
+    "@opentelemetry/instrumentation-pg": "^0.74.0",
+    "@opentelemetry/instrumentation-redis": "^0.70.0",
+    "@opentelemetry/sdk-node": "^0.222.0"
+  },
+  "optionalDependencies": {
+    "@nodryl/darwin-arm64": "0.1.0",
+    "@nodryl/darwin-x64": "0.1.0",
+    "@nodryl/linux-arm64": "0.1.0",
+    "@nodryl/linux-x64": "0.1.0"
+  }
+}

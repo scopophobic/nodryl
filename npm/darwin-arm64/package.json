@@ -1,0 +1,8 @@
+{
+  "name": "@nodryl/darwin-arm64",
+  "version": "0.1.0",
+  "description": "Nodryl binary for macOS arm64",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/nodryl"]
+}

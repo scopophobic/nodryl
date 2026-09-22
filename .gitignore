@@ -1,0 +1,6 @@
+node_modules/
+dist/
+test/fixture/dist/
+npm/*/bin/nodryl
+*.db
+.DS_Store
