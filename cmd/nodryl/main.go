@@ -44,10 +44,10 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "explore":
-		if len(args) != 1 {
-			return errors.New("usage: nodryl explore")
+		if len(args) > 2 {
+			return errors.New("usage: nodryl explore [path]")
 		}
-		g, err := scan.Project(".")
+		g, err := scan.Project(projectPath(args[1:]))
 		if err != nil {
 			return err
 		}
@@ -55,14 +55,15 @@ func run(args []string) error {
 		_, err = program.Run()
 		return err
 	case "map":
-		if len(args) > 2 || len(args) == 2 && args[1] != "--json" {
-			return errors.New("usage: nodryl map [--json]")
-		}
-		g, err := scan.Project(".")
+		path, jsonOutput, err := mapArgs(args[1:])
 		if err != nil {
 			return err
 		}
-		if len(args) == 2 {
+		g, err := scan.Project(path)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
 			return json.NewEncoder(os.Stdout).Encode(g)
 		}
 		printMap(g)
@@ -72,12 +73,89 @@ func run(args []string) error {
 			return errors.New("usage: nodryl dev -- <app command>")
 		}
 		return runDev(args[2:])
+	case "observe":
+		path, address, err := observeArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		return runObserve(path, address)
 	case "help", "--help", "-h":
-		fmt.Println("Nodryl — see how a project fits together\n\n  nodryl                     explore this project in the terminal\n  nodryl explore             open the project map\n  nodryl map [--json]        print the map or export its graph\n  nodryl dev -- <command>    explore with live Node tracing")
+		fmt.Println("Nodryl — see how a project fits together\n\n  nodryl                               explore this project in the terminal\n  nodryl explore [path]                open the project map\n  nodryl map [--json] [path]           print the map or export its graph\n  nodryl observe [--listen addr] [path]  receive OTLP/HTTP traces from any instrumented backend\n  nodryl dev -- <command>              launch a Node app with bundled tracing\n\n  See user.md for setup and key bindings.")
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q; run nodryl help", args[0])
 	}
+}
+
+func projectPath(args []string) string {
+	if len(args) == 0 {
+		return "."
+	}
+	return args[0]
+}
+
+func mapArgs(args []string) (string, bool, error) {
+	path, jsonOutput, hasPath := ".", false, false
+	for _, arg := range args {
+		if arg == "--json" {
+			if jsonOutput {
+				return "", false, errors.New("usage: nodryl map [--json] [path]")
+			}
+			jsonOutput = true
+		} else if strings.HasPrefix(arg, "-") || hasPath {
+			return "", false, errors.New("usage: nodryl map [--json] [path]")
+		} else {
+			path = arg
+			hasPath = true
+		}
+	}
+	return path, jsonOutput, nil
+}
+
+func observeArgs(args []string) (string, string, error) {
+	path, address, hasPath, hasListen := ".", "127.0.0.1:4318", false, false
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--listen" && !hasListen && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			i++
+			address = args[i]
+			hasListen = true
+		} else if strings.HasPrefix(args[i], "-") || hasPath {
+			return "", "", errors.New("usage: nodryl observe [--listen address] [path]")
+		} else {
+			path = args[i]
+			hasPath = true
+		}
+	}
+	return path, address, nil
+}
+
+func runObserve(path, address string) error {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeCharDevice == 0 {
+		return errors.New("observe needs an interactive terminal")
+	}
+	g, err := scan.Project(path)
+	if err != nil {
+		return err
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("listen for traces: %w", err)
+	}
+	store := trace.NewStore()
+	server := &http.Server{Handler: trace.Handler(store), ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = server.Serve(listener) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+	model := ui.NewObserved(g, store, "http://"+listener.Addr().String())
+	_, err = tea.NewProgram(model, tea.WithAltScreen()).Run()
+	return err
 }
 
 func printMap(g graph.Graph) {

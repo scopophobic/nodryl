@@ -2,6 +2,7 @@ package trace
 
 import (
 	"bytes"
+	"compress/gzip"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	collector "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	common "go.opentelemetry.io/proto/otlp/common/v1"
+	resource "go.opentelemetry.io/proto/otlp/resource/v1"
 	traces "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -58,6 +60,57 @@ func TestIngestKeepsOnlyDisplayFields(t *testing.T) {
 		if strings.Contains(got.Name, "secret") || strings.Contains(got.Name, "SELECT") {
 			t.Fatal("unsafe span text leaked")
 		}
+	}
+}
+
+func TestIngestGenericServiceFlow(t *testing.T) {
+	s := NewStore()
+	now := uint64(time.Now().UnixNano())
+	traceID := bytes.Repeat([]byte{7}, 16)
+	rootID := bytes.Repeat([]byte{1}, 8)
+	batch := &collector.ExportTraceServiceRequest{ResourceSpans: []*traces.ResourceSpans{
+		{Resource: &resource.Resource{Attributes: []*common.KeyValue{{Key: "service.name", Value: &common.AnyValue{Value: &common.AnyValue_StringValue{StringValue: "billing-api"}}}}}, ScopeSpans: []*traces.ScopeSpans{{Spans: []*traces.Span{
+			{TraceId: traceID, SpanId: rootID, Name: "process order", StartTimeUnixNano: now, EndTimeUnixNano: now + 5000000},
+			{TraceId: traceID, SpanId: bytes.Repeat([]byte{2}, 8), ParentSpanId: rootID, Name: "charge card", StartTimeUnixNano: now + 1000000, EndTimeUnixNano: now + 4000000},
+		}}}},
+	}}
+	data, err := proto.Marshal(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Ingest(data); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Snapshot()
+	if len(got) != 1 || got[0].Name != "process order" || len(got[0].Spans) != 2 {
+		t.Fatalf("generic trace = %+v", got)
+	}
+	if got[0].Spans[0].Service != "billing-api" || got[0].Spans[1].ParentID != got[0].Spans[0].ID {
+		t.Fatalf("service or parent relation lost: %+v", got[0].Spans)
+	}
+}
+
+func TestHandlerReceivesCompressedOTLP(t *testing.T) {
+	data, err := proto.Marshal(&collector.ExportTraceServiceRequest{ResourceSpans: []*traces.ResourceSpans{{ScopeSpans: []*traces.ScopeSpans{{Spans: []*traces.Span{{TraceId: bytes.Repeat([]byte{3}, 16), SpanId: bytes.Repeat([]byte{4}, 8), Name: "background job"}}}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/traces", &compressed)
+	request.Header.Set("Content-Type", "application/x-protobuf")
+	request.Header.Set("Content-Encoding", "gzip")
+	response := httptest.NewRecorder()
+	store := NewStore()
+	Handler(store).ServeHTTP(response, request)
+	if response.Code != http.StatusOK || len(store.Snapshot()) != 1 {
+		t.Fatalf("compressed OTLP response %d, traces %+v", response.Code, store.Snapshot())
 	}
 }
 

@@ -53,6 +53,9 @@ func Project(root string) (graph.Graph, error) {
 			}
 			return nil
 		}
+		if entry.Name() == ".DS_Store" {
+			return nil
+		}
 		files++
 		if files > 50000 {
 			return fmt.Errorf("project exceeds 50,000 files after exclusions")

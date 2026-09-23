@@ -1,7 +1,9 @@
 package trace
 
 import (
+	"compress/gzip"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +21,8 @@ type Span struct {
 	ID       string
 	ParentID string
 	Name     string
+	Service  string
+	Kind     string
 	Start    time.Time
 	Duration time.Duration
 	Error    bool
@@ -69,6 +73,10 @@ func (s *Store) Ingest(payload []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, resource := range batch.ResourceSpans {
+		service := safeLabel(first(attributes(resource.GetResource().GetAttributes()), "service.name"), 64)
+		if service == "" {
+			service = "unknown service"
+		}
 		for _, scope := range resource.ScopeSpans {
 			for _, raw := range scope.Spans {
 				id := hex.EncodeToString(raw.TraceId)
@@ -83,7 +91,7 @@ func (s *Store) Ingest(payload []byte) error {
 				statusCode := first(attrs, "http.response.status_code", "http.status_code")
 				span := Span{
 					ID: hex.EncodeToString(raw.SpanId), ParentID: hex.EncodeToString(raw.ParentSpanId),
-					Name: "operation", Start: time.Unix(0, int64(raw.StartTimeUnixNano)),
+					Name: "operation", Service: service, Kind: raw.Kind.String(), Start: time.Unix(0, int64(raw.StartTimeUnixNano)),
 					Duration: time.Duration(end - raw.StartTimeUnixNano),
 					Error:    raw.Status != nil && raw.Status.Code == 2 || strings.HasPrefix(statusCode, "5"),
 					System:   first(attrs, "db.system.name", "db.system", "messaging.system"),
@@ -102,6 +110,8 @@ func (s *Store) Ingest(payload []byte) error {
 					span.Name = "database/cache call"
 				case span.Method != "":
 					span.Name = span.Method + " HTTP"
+				case safeOperation(raw.Name):
+					span.Name = safeLabel(raw.Name, 80)
 				}
 				item := s.requests[id]
 				if item == nil {
@@ -140,6 +150,19 @@ func (s *Store) Ingest(payload []byte) error {
 	return nil
 }
 
+func safeOperation(name string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(name))
+	if upper == "" || strings.ContainsAny(name, "?=&\n\r") || strings.Contains(name, "://") {
+		return false
+	}
+	for _, prefix := range []string{"SELECT ", "INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DROP ", "WITH "} {
+		if strings.HasPrefix(upper, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
 func Handler(store *Store) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/traces", func(w http.ResponseWriter, r *http.Request) {
@@ -151,8 +174,32 @@ func Handler(store *Store) http.Handler {
 			http.Error(w, "OTLP protobuf required", http.StatusUnsupportedMediaType)
 			return
 		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+		var input io.Reader = http.MaxBytesReader(w, r.Body, 4<<20)
+		switch r.Header.Get("Content-Encoding") {
+		case "", "identity":
+		case "gzip":
+			reader, err := gzip.NewReader(input)
+			if err != nil {
+				http.Error(w, "invalid gzip trace batch", http.StatusBadRequest)
+				return
+			}
+			defer reader.Close()
+			input = reader
+		default:
+			http.Error(w, "unsupported trace compression", http.StatusUnsupportedMediaType)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(input, (4<<20)+1))
 		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				http.Error(w, "trace batch too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "invalid trace batch", http.StatusBadRequest)
+			return
+		}
+		if len(body) > 4<<20 {
 			http.Error(w, "trace batch too large", http.StatusRequestEntityTooLarge)
 			return
 		}
