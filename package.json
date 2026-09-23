@@ -4,7 +4,7 @@
   "private": false,
   "description": "Watch your software run",
   "bin": { "nodryl": "bin/nodryl.js" },
-  "files": ["bin/nodryl.js", "bin/preload.cjs", "readme.md"],
+  "files": ["bin/nodryl.js", "bin/preload.cjs", "readme.md", "user.md"],
   "engines": { "node": ">=20.6" },
   "scripts": {
     "test": "npm run build:fixture && go test ./...",
