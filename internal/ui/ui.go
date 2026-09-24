@@ -30,6 +30,7 @@ var (
 )
 
 type changedMsg struct{}
+type motionMsg struct{ epoch uint64 }
 type exitedMsg struct{ err error }
 type rescannedMsg struct {
 	graph graph.Graph
@@ -37,28 +38,37 @@ type rescannedMsg struct {
 }
 
 type Model struct {
-	Graph        graph.Graph
-	Store        *trace.Store
-	Exited       <-chan error
-	Requests     []trace.Request
-	Live         bool
-	Activity     bool
-	Current      string
-	Cursor       int
-	Scroll       int
-	Width        int
-	Height       int
-	Searching    bool
-	Search       string
-	Help         bool
-	AppStatus    string
-	Notice       string
-	Endpoint     string
-	DetailScroll int
+	Graph         graph.Graph
+	Store         *trace.Store
+	Exited        <-chan error
+	Requests      []trace.Request
+	Live          bool
+	Activity      bool
+	Flow          bool
+	FlowIndex     int
+	MotionFrame   int
+	PulseStep     int
+	PulseActive   bool
+	PulseDone     bool
+	MotionEpoch   uint64
+	ReducedMotion bool
+	paths         []flowPath
+	Current       string
+	Cursor        int
+	Scroll        int
+	Width         int
+	Height        int
+	Searching     bool
+	Search        string
+	Help          bool
+	AppStatus     string
+	Notice        string
+	Endpoint      string
+	DetailScroll  int
 }
 
 func NewMap(g graph.Graph) Model {
-	return Model{Graph: g, Current: "project:root", Cursor: -1, AppStatus: "Map ready"}
+	return Model{Graph: g, Current: "project:root", Cursor: -1, AppStatus: "Map ready", ReducedMotion: os.Getenv("NODRYL_REDUCED_MOTION") == "1", paths: flowPathsFor(g)}
 }
 
 func NewLive(g graph.Graph, store *trace.Store, exited <-chan error) Model {
@@ -105,20 +115,34 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Searching {
 			return m.updateSearch(msg)
 		}
+		if m.Flow {
+			switch msg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			case "?":
+				m.Help = !m.Help
+			case "tab":
+				return m.cycleTab()
+			case "f", "esc":
+				return m.toggleFlow()
+			case "p", " ":
+				m.triggerPulse()
+			case "up", "k":
+				m.moveFlow(-1)
+			case "down", "j":
+				m.moveFlow(1)
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "?":
 			m.Help = !m.Help
 		case "tab":
-			if m.Live {
-				m.Activity = !m.Activity
-				m.Cursor, m.Scroll, m.DetailScroll = 0, 0, 0
-				if !m.Activity {
-					m.Cursor = -1
-				}
-				m.Search = ""
-			}
+			return m.cycleTab()
+		case "f":
+			return m.toggleFlow()
 		case "/":
 			m.Searching, m.Search, m.Cursor, m.Scroll = true, "", 0, 0
 		case "esc":
@@ -166,6 +190,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			root := m.Graph.Root
 			return m, func() tea.Msg { g, err := scan.Project(root); return rescannedMsg{graph: g, err: err} }
 		}
+	case tea.MouseMsg:
+		if m.Flow && !m.Help && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && msg.Y == flowButtonRow(m.Height) && msg.X >= 2 && msg.X < 26 {
+			m.triggerPulse()
+		}
+	case motionMsg:
+		if !m.Flow || msg.epoch != m.MotionEpoch || m.ReducedMotion {
+			break
+		}
+		m.MotionFrame++
+		m.advancePulse()
+		return m, nextMotion(m.MotionEpoch)
 	case changedMsg:
 		m.Requests = m.Store.Snapshot()
 		if m.Cursor >= m.itemCount() && m.Cursor > 0 {
@@ -183,6 +218,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.Notice = "Scan failed: " + msg.err.Error()
 		} else {
 			m.Graph, m.Notice = msg.graph, "Map refreshed"
+			m.paths = flowPathsFor(msg.graph)
 			if _, ok := m.Graph.NodeByID(m.Current); !ok {
 				m.Current = "project:root"
 			}
@@ -377,6 +413,9 @@ func (m Model) View() string {
 	if width < 44 || height < 12 {
 		return fit(cyan.Render("◉ nodryl")+"  "+muted.Render("Terminal too small; enlarge to explore"), width)
 	}
+	if m.Flow {
+		return m.flowView(width, height)
+	}
 	var out strings.Builder
 	project := filepath.Base(m.Graph.Root)
 	counts := m.counts()
@@ -386,7 +425,7 @@ func (m Model) View() string {
 		status = "● " + m.AppStatus
 	}
 	out.WriteString(fit(brand+"  "+amber.Render(status), width) + "\n")
-	mapTab, activityTab := cyan.Bold(true).Render("▰ Map"), muted.Render("▱ Activity")
+	mapTab, flowTab, activityTab := cyan.Bold(true).Render("▰ Map"), muted.Render("▱ Flow"), muted.Render("▱ Activity")
 	if m.Activity {
 		mapTab, activityTab = muted.Render("▱ Map"), amber.Bold(true).Render("▰ Activity")
 	}
@@ -394,7 +433,7 @@ func (m Model) View() string {
 	if m.Live {
 		stats += fmt.Sprintf("   %d traces", len(m.Requests))
 	}
-	out.WriteString(fit("  "+mapTab+"   "+activityTab+"    "+shade.Render(stats), width) + "\n")
+	out.WriteString(fit("  "+mapTab+"   "+flowTab+"   "+activityTab+"    "+shade.Render(stats), width) + "\n")
 	out.WriteString(rule.Render(strings.Repeat("━", width)) + "\n")
 	crumb := project
 	if m.Current != "project:root" && !m.Activity {
@@ -435,20 +474,20 @@ func (m Model) View() string {
 		}
 	}
 	out.WriteString(rule.Render(strings.Repeat("━", width)) + "\n")
-	footer := "↑↓ move   ↵ open   ← back   / find   s source   r rescan   ? help   q quit"
+	footer := "Tab views   f flow   ↑↓ move   ↵ open   ← back   / find   s source   r rescan   ? help   q quit"
 	if m.Live {
-		footer = "Tab switch   Pg↑↓ flow   " + footer
+		footer = "Pg↑↓ detail   " + footer
 	}
 	if width < 105 {
-		footer = "↑↓ move  ↵ open  ← back  / find  s source  r scan  ? help  q quit"
+		footer = "Tab flow  ↑↓ move  ↵ open  / find  s source  ? help  q quit"
 		if m.Live {
-			footer = "Tab tabs  ↑↓ move  Pg↑↓ flow  / find  s source  ? help  q quit"
+			footer = "Tab views  f flow  ↑↓ move  / find  ? help  q quit"
 		}
 	}
 	if width < 70 {
-		footer = "↑↓ move  ↵ open  / find  ? help  q quit"
+		footer = "f flow  ↑↓ move  / find  ? help  q quit"
 		if m.Live {
-			footer = "Tab tabs  ↑↓ move  / find  ? help  q quit"
+			footer = "Tab views  f flow  ? help  q quit"
 		}
 	}
 	out.WriteString(fit("  "+muted.Render(footer), width) + "\n")
@@ -823,7 +862,7 @@ func (m Model) helpView(width, height int) string {
 		cyan.Bold(true).Render("Nodryl  /  keys"), "",
 		"↑ ↓ or j k     Move through components", "Enter or →      Open a directory", "← or Backspace Go to parent", "g               Return to project root",
 		"/               Find a component or request", "Esc             Clear search or go back", "s               Open selected source", "r               Rescan the project",
-		"Tab             Switch map and activity", "Page Up/Down    Scroll the selected request flow", "?               Close this help", "q               Quit", "", "Evidence", "  ─ code         Found in the repository", "  ● runtime      Observed while the app ran",
+		"Tab             Cycle Map, Flow, and Activity", "f               Open or close Flow", "p / Space       Send an animated example request", "Mouse           Click Send request in Flow", "Page Up/Down    Scroll the selected trace detail", "?               Close this help", "q               Quit", "", "Evidence", "  ─ code         Found in the repository", "  ● runtime      Observed while the app ran",
 	}
 	var out strings.Builder
 	for i := 0; i < height; i++ {

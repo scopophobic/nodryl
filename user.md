@@ -46,7 +46,9 @@ In another terminal:
 curl http://127.0.0.1:3000/checkout
 ```
 
-Press **Tab** to open Activity. Select the checkout request. The right pane shows the HTTP and Express steps, the outbound call to `/payment`, their durations, and any reported failure. Press **Tab** to inspect the project map again.
+Press **Tab** twice to open Activity (the first press opens Flow). Select the checkout request. The right pane shows the HTTP and Express steps, the outbound call to `/payment`, their durations, and any reported failure. Press **Tab** to inspect the project map again.
+
+Press **f** to open **Flow**. Select a route with **↑/↓**, then click **Send request** or press **p** (Space also works). A bright amber packet moves from the caller through the detected code links; the selected stage glows as it passes. A blue packet then travels back to show the response. Muted dots keep moving along the outbound edges while Flow is open. Flow uses a fixed, illustrative clock and puts call sites in source order; use **Activity** to inspect what a real request actually did.
 
 ### Any instrumented backend
 
@@ -80,7 +82,11 @@ To listen on another local port, use `nodryl observe --listen 127.0.0.1:4320` an
 | `←` / `Backspace` / `h` | Go to the parent directory. |
 | `g` | Return to the project root. |
 | `/` | Search file names, source paths, or request names. `Enter` keeps the filter; `Esc` clears it. |
-| `Tab` | Switch Map and Activity when tracing is active. |
+| `Tab` | Cycle Map, Flow, and Activity when tracing is active; cycle Map and Flow otherwise. |
+| `f` | Open or close the animated Flow screen. |
+| `p` / `Space` | Send an illustrative request through the selected Flow path. |
+| Mouse click | Click **Send request** in Flow. |
+| `↑` / `↓` in Flow | Choose another detected route or entrypoint. |
 | `s` | Open a selected source location in `$VISUAL`, `$EDITOR`, or `vi`. |
 | `r` | Rescan the project map. |
 | `?` | Show or hide the key guide. |
@@ -89,6 +95,7 @@ To listen on another local port, use `nodryl observe --listen 127.0.0.1:4320` an
 ## Reading the display
 
 - **Map** shows files, folders, dependency manifests, imports, detected routes, and source links. Cyan marks code evidence.
+- **Flow** animates detected route and call links. The small dots show direction; amber follows a request outward, blue follows its return. If no route or entrypoint is detected, Flow shows a clearly labeled example. Flow motion is illustrative and does not claim live traffic or actual execution order. Set `NODRYL_REDUCED_MOTION=1` to show the path without animation.
 - **Activity** groups observed spans by trace ID, labels the reporting service, nests child spans beneath parents, shows duration bars, and marks reported failures in red. Amber marks runtime evidence.
 - The Activity list keeps the most recent 100 traces in memory. A trace appears when the exporter sends it, which may happen a few seconds after a request ends.
 - Source links from Activity are available when a request name matches a route detected in the project.

@@ -51,7 +51,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
-		program := tea.NewProgram(ui.NewMap(g), tea.WithAltScreen())
+		program := tea.NewProgram(ui.NewMap(g), tea.WithAltScreen(), tea.WithMouseCellMotion())
 		_, err = program.Run()
 		return err
 	case "map":
@@ -154,7 +154,7 @@ func runObserve(path, address string) error {
 		_ = server.Shutdown(ctx)
 	}()
 	model := ui.NewObserved(g, store, "http://"+listener.Addr().String())
-	_, err = tea.NewProgram(model, tea.WithAltScreen()).Run()
+	_, err = tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
@@ -264,7 +264,7 @@ func runDev(command []string) error {
 		}
 		exited <- err
 	}()
-	program := tea.NewProgram(ui.New(g, store, exited), tea.WithAltScreen())
+	program := tea.NewProgram(ui.New(g, store, exited), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, uiErr := program.Run()
 	_ = syscall.Kill(-app.Process.Pid, syscall.SIGTERM)
 	select {

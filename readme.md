@@ -36,7 +36,7 @@ Run Nodryl from the project directory, or pass a directory to `explore`, `map`, 
 - `nodryl observe [--listen address] [path]` receives OTLP/HTTP protobuf traces from any instrumented backend and opens the map and activity tabs.
 - `nodryl dev -- <command>` launches a supported Node.js app and opens the map and live activity tabs.
 
-In the TUI, use ↑/↓ to browse, Enter to open a directory, ← to go back, `/` to search, `s` to open source, `r` to rescan, `?` for help, and `q` to quit. Press Tab to switch map/activity while running `dev`. Cyan links are inferred from code; amber activity is runtime evidence.
+In the TUI, use ↑/↓ to browse, Enter to open a directory, ← to go back, `/` to search, `s` to open source, `r` to rescan, `?` for help, and `q` to quit. Press `f` for the animated Flow view, then `p` or the on-screen button to send an illustrative request and watch the response return. Tab cycles Map, Flow, and Activity while tracing. Flow motion illustrates code links; amber Activity steps are runtime evidence.
 
 The universal scan is a baseline, not full semantic understanding of every language: unknown files still appear in the map, common manifests contribute dependency links, and JavaScript/TypeScript, Go, and Python receive deeper parsing. Framework behavior, generated wiring, and dynamic calls may be missing. The generic live receiver requires compatible OpenTelemetry traces from the backend. The bundled automatic tracing path currently supports CommonJS Express apps and traces HTTP, Express, PostgreSQL, node-redis, and ioredis calls; it does not automatically trace internal function calls. No payloads, headers, or SQL text are retained by the local receiver.
 
