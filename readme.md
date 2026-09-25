@@ -2,6 +2,10 @@
 
 Nodryl is a terminal-first system map for a codebase. It inventories files, directories, languages, and common dependency manifests in any repository, then adds deeper code relationships where parsers are available. A live view follows traces exported by an instrumented backend. The bundled Node.js helper can launch supported Express apps with tracing enabled.
 
+![Nodryl Flow studio showing the inferred checkout path from Caller to GET /checkout to an HTTP call, with outbound and inbound tracks](docs/images/flow-studio.png)
+
+*Flow studio: press `p` or click **Send request** to animate this illustrative path and its return.*
+
 See the [user guide](user.md) for every command, key binding, backend setup, and current limitation.
 
 ## Try it locally
